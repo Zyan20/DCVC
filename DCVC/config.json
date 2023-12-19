@@ -1,0 +1,14 @@
+{
+    "training":{
+        "stage_milestones": [
+            20, 40, 60
+        ],
+
+        "batch_size": 4,
+
+        "base_lr": 1e-4,
+        "aux_lr": 1e-3,
+
+        "flow_pretrain_dir": ""
+    }
+}

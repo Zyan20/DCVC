@@ -189,24 +189,34 @@ class DCVC_net(nn.Module):
 
     def mv_refine(self, ref, mv):
         return self.mvDecoder_part2(torch.cat((mv, ref), 1)) + mv
-
-    def quantize(self, inputs, mode, means=None):
-        assert(mode == "dequantize")
-        outputs = inputs.clone()
-        outputs -= means
-        outputs = torch.round(outputs)
-        outputs += means
-        return outputs
+    
+    def quant(self, x):
+        if self.training:
+            return x + torch.nn.init.uniform_(torch.zeros_like(x), -0.5, 0.5)
+        else:
+            return torch.round(x)
+        
+    # def quantize(self, inputs, mode, means=None):
+    #     assert(mode == "dequantize")
+    #     outputs = inputs.clone()
+    #     outputs -= means
+    #     outputs = torch.round(outputs)
+    #     outputs += means
+    #     return outputs
 
     def feature_probs_based_sigma(self, feature, mean, sigma):
-        outputs = self.quantize(
-            feature, "dequantize", mean
-        )
-        values = outputs - mean
+        # outputs = self.quantize(
+        #     feature, "dequantize", mean
+        # )
+        # values = outputs - mean
+
         mu = torch.zeros_like(sigma)
         sigma = sigma.clamp(1e-5, 1e10)
-        gaussian = torch.distributions.laplace.Laplace(mu, sigma)
-        probs = gaussian.cdf(values + 0.5) - gaussian.cdf(values - 0.5)
+
+        value = feature - mean
+        
+        gaussian = torch.distributions.normal.Normal(mu, sigma)
+        probs = gaussian.cdf(value + 0.5) - gaussian.cdf(value - 0.5)
         total_bits = torch.sum(torch.clamp(-1.0 * torch.log(probs + 1e-5) / math.log(2.0), 0, 50))
         return total_bits, probs
 
@@ -415,10 +425,12 @@ class DCVC_net(nn.Module):
         estmv = self.opticFlow(input_image, referframe)
         mvfeature = self.mvEncoder(estmv)
         z_mv = self.mvpriorEncoder(mvfeature)
-        compressed_z_mv = torch.round(z_mv)
+        # compressed_z_mv = torch.round(z_mv)
+        compressed_z_mv = self.quant(z_mv)
         params_mv = self.mvpriorDecoder(compressed_z_mv)
 
-        quant_mv = torch.round(mvfeature)
+        # quant_mv = torch.round(mvfeature)
+        quant_mv = self.quant(mvfeature)
 
         ctx_params_mv = self.auto_regressive_mv(quant_mv)
         gaussian_params_mv = self.entropy_parameters_mv(
@@ -436,12 +448,14 @@ class DCVC_net(nn.Module):
 
         feature = self.contextualEncoder(torch.cat((input_image, context), dim=1))
         z = self.priorEncoder(feature)
-        compressed_z = torch.round(z)
+        # compressed_z = torch.round(z)
+        compressed_z = self.quant(z)
         params = self.priorDecoder(compressed_z)
 
         feature_renorm = feature
 
-        compressed_y_renorm = torch.round(feature_renorm)
+        # compressed_y_renorm = torch.round(feature_renorm)
+        compressed_y_renorm = self.quant(feature_renorm)
 
         ctx_params = self.auto_regressive(compressed_y_renorm)
         gaussian_params = self.entropy_parameters(
@@ -452,9 +466,11 @@ class DCVC_net(nn.Module):
         recon_image_feature = self.contextualDecoder_part1(compressed_y_renorm)
         recon_image = self.contextualDecoder_part2(torch.cat((recon_image_feature, context), dim=1))
 
+
         total_bits_y, _ = self.feature_probs_based_sigma(
-            feature_renorm, means_hat, scales_hat)
-        total_bits_mv, _ = self.feature_probs_based_sigma(mvfeature, means_hat_mv, scales_hat_mv)
+            compressed_y_renorm, means_hat, scales_hat
+        )
+        total_bits_mv, _ = self.feature_probs_based_sigma(quant_mv, means_hat_mv, scales_hat_mv)
         total_bits_z, _ = self.iclr18_estrate_bits_z(compressed_z)
         total_bits_z_mv, _ = self.iclr18_estrate_bits_z_mv(compressed_z_mv)
 
@@ -475,6 +491,44 @@ class DCVC_net(nn.Module):
                 "recon_image": recon_image,
                 "context": context,
                 }
+    
+    def forward_mv_generation(self, ref_frame, input_frame):
+        # ME
+        est_mv = self.opticFlow(input_frame, ref_frame)
+        mv_feature = self.mvEncoder(est_mv)
+
+        # hyper prior
+        z_mv = self.mvpriorEncoder(mv_feature)
+        quant_z_mv = self.quant(z_mv)
+        prioir_params_mv = self.mvpriorDecoder(quant_z_mv)
+
+        # context
+        quant_mv = self.quant(mv_feature)
+
+        ctx_params_mv = self.auto_regressive_mv(quant_mv)
+        gaussian_params_mv = self.entropy_parameters_mv(
+            torch.cat((prioir_params_mv, ctx_params_mv), dim=1)
+        )
+        means_hat_mv, scales_hat_mv = gaussian_params_mv.chunk(2, 1)
+        quant_mv_upsample = self.mvDecoder_part1(quant_mv)
+        quant_mv_upsample_refine = self.mv_refine(ref_frame, quant_mv_upsample)
+
+        # MC
+        prediction = flow_warp(ref_frame, quant_mv_upsample_refine)
+
+        # calc mv bpp
+        total_bits_z_mv, _ = self.iclr18_estrate_bits_z_mv(quant_z_mv)
+        total_bits_mv, _ = self.feature_probs_based_sigma(quant_mv, means_hat_mv, scales_hat_mv)
+        im_shape = input_frame.size()
+        pixel_num = im_shape[0] * im_shape[2] * im_shape[3]
+        bpp_mv_y = total_bits_mv / pixel_num
+        bpp_mv_z = total_bits_z_mv / pixel_num
+
+        return {
+            "bpp_mv_y": bpp_mv_y,
+            "bpp_mv_z": bpp_mv_z,
+            "recon_image": prediction
+        }
 
     def load_dict(self, pretrained_dict):
         result_dict = {}

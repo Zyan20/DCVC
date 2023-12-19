@@ -257,3 +257,14 @@ class ME_Spynet(nn.Module):
                                                       flowfiledsUpsample], 1))
 
         return flowfileds
+    
+    def _load_Spynet(self, model_dir):
+        for i, layer in enumerate(self.moduleBasic):
+            layer_name = f"modelL{i + 1}"
+
+            layer.conv1.weight.data, layer.conv1.bias.data = load_weight_form_np(model_dir, layer_name + '_F-1')
+            layer.conv2.weight.data, layer.conv2.bias.data = load_weight_form_np(model_dir, layer_name + '_F-2')
+            layer.conv3.weight.data, layer.conv3.bias.data = load_weight_form_np(model_dir, layer_name + '_F-3')
+            layer.conv4.weight.data, layer.conv4.bias.data = load_weight_form_np(model_dir, layer_name + '_F-4')
+            layer.conv5.weight.data, layer.conv5.bias.data = load_weight_form_np(model_dir, layer_name + '_F-5')
+        
