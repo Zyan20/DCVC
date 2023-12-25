@@ -6,3 +6,8 @@
 build/
 *.tar
 *.pyd
+
+*.ckpt
+*.pth
+
+lightning_logs

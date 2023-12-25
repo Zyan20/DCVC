@@ -181,11 +181,13 @@ class DCVC_net(nn.Module):
         self.opticFlow = ME_Spynet()
 
     def motioncompensation(self, ref, mv):
+        warpped = flow_warp(ref, mv)
+
         ref_feature = self.feature_extract(ref)
         prediction_init = flow_warp(ref_feature, mv)
         context = self.context_refine(prediction_init)
 
-        return context
+        return context, warpped
 
     def mv_refine(self, ref, mv):
         return self.mvDecoder_part2(torch.cat((mv, ref), 1)) + mv
@@ -442,7 +444,7 @@ class DCVC_net(nn.Module):
 
         quant_mv_upsample_refine = self.mv_refine(referframe, quant_mv_upsample)
 
-        context = self.motioncompensation(referframe, quant_mv_upsample_refine)
+        context, warpped = self.motioncompensation(referframe, quant_mv_upsample_refine)
 
         temporal_prior_params = self.temporalPriorEncoder(context)
 
@@ -488,47 +490,12 @@ class DCVC_net(nn.Module):
                 "bpp_y": bpp_y,
                 "bpp_z": bpp_z,
                 "bpp": bpp,
+                
+                "warpped_image": warpped,
                 "recon_image": recon_image,
                 "context": context,
                 }
-    
-    def forward_mv_generation(self, ref_frame, input_frame):
-        # ME
-        est_mv = self.opticFlow(input_frame, ref_frame)
-        mv_feature = self.mvEncoder(est_mv)
 
-        # hyper prior
-        z_mv = self.mvpriorEncoder(mv_feature)
-        quant_z_mv = self.quant(z_mv)
-        prioir_params_mv = self.mvpriorDecoder(quant_z_mv)
-
-        # context
-        quant_mv = self.quant(mv_feature)
-
-        ctx_params_mv = self.auto_regressive_mv(quant_mv)
-        gaussian_params_mv = self.entropy_parameters_mv(
-            torch.cat((prioir_params_mv, ctx_params_mv), dim=1)
-        )
-        means_hat_mv, scales_hat_mv = gaussian_params_mv.chunk(2, 1)
-        quant_mv_upsample = self.mvDecoder_part1(quant_mv)
-        quant_mv_upsample_refine = self.mv_refine(ref_frame, quant_mv_upsample)
-
-        # MC
-        prediction = flow_warp(ref_frame, quant_mv_upsample_refine)
-
-        # calc mv bpp
-        total_bits_z_mv, _ = self.iclr18_estrate_bits_z_mv(quant_z_mv)
-        total_bits_mv, _ = self.feature_probs_based_sigma(quant_mv, means_hat_mv, scales_hat_mv)
-        im_shape = input_frame.size()
-        pixel_num = im_shape[0] * im_shape[2] * im_shape[3]
-        bpp_mv_y = total_bits_mv / pixel_num
-        bpp_mv_z = total_bits_z_mv / pixel_num
-
-        return {
-            "bpp_mv_y": bpp_mv_y,
-            "bpp_mv_z": bpp_mv_z,
-            "recon_image": prediction
-        }
 
     def load_dict(self, pretrained_dict):
         result_dict = {}

@@ -1,14 +1,19 @@
 {
     "training":{
         "stage_milestones": [
-            20, 40, 60
+            10, 20, 30
         ],
+
+        "train_lambda": 2048,
 
         "batch_size": 4,
 
         "base_lr": 1e-4,
         "aux_lr": 1e-3,
 
-        "flow_pretrain_dir": ""
+        "multi_frame_training": true,
+
+
+        "flow_pretrain_dir": "../../PyTorchVideoCompression/mDVC/data/flow_pretrain_np/"
     }
 }
