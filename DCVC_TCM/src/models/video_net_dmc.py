@@ -425,8 +425,11 @@ class DMC(nn.Module):
         return result
 
     def quant(self, x):
-        return torch.round(x)
-
+        if self.training:
+            return x + torch.nn.init.uniform_(torch.zeros_like(x), -0.5, 0.5)
+        else:
+            return torch.round(x)
+        
     def forward_one_frame(self, x, ref_frame, ref_feature):
         est_mv = self.optic_flow(x, ref_frame)
         mv_y = self.mv_encoder(est_mv)
@@ -507,3 +510,71 @@ class DMC(nn.Module):
                 "bit": total_bits_y + total_bits_z + total_bits_mv_y + total_bits_mv_z,
                 "mv": mv_hat
                 }
+
+    def forward(self, input_frame, ref_frame, ref_feature):
+        # ME
+        est_mv = self.optic_flow(input_frame, ref_frame)
+        mv_y = self.mv_encoder(est_mv)
+        mv_z = self.mv_prior_encoder(mv_y)
+        mv_z_hat = self.quant(mv_z)     # bpp_mv_z
+        mv_params = self.mv_prior_decoder(mv_z_hat)
+        mv_scales_hat, mv_means_hat = mv_params.chunk(2, 1)
+
+
+        mv_y_res = mv_y - mv_means_hat
+        mv_y_q = self.quant(mv_y_res)       # bpp_mv_y
+        mv_y_hat = mv_y_q + mv_means_hat
+
+        mv_hat = self.mv_decoder(mv_y_hat)
+
+        context1, context2, context3, warp_frame = self.motion_compensation(
+            ref_frame, ref_feature, mv_hat)
+
+        y = self.contextual_encoder(input_frame, context1, context2, context3)
+        z = self.contextual_hyper_prior_encoder(y)
+        z_hat = self.quant(z)       # bpp_z
+
+        hierarchical_params = self.contextual_hyper_prior_decoder(z_hat)
+        temporal_params = self.temporal_prior_encoder(context1, context2, context3)
+        params = torch.cat((temporal_params, hierarchical_params), dim=1)
+        gaussian_params = self.contextual_entropy_parameter(params)
+        scales_hat, means_hat = gaussian_params.chunk(2, 1)
+
+        y_res = y - means_hat
+        y_q = self.quant(y_res)     # bpp_y
+        y_hat = y_q + means_hat
+
+        recon_image_feature = self.contextual_decoder(y_hat, context2, context3)
+        feature, recon_image = self.recon_generation_net(recon_image_feature, context1)
+
+
+        y_for_bit = y_q
+        mv_y_for_bit = mv_y_q
+        z_for_bit = z_hat
+        mv_z_for_bit = mv_z_hat
+        total_bits_y, _ = self.get_y_bits_probs(y_for_bit, scales_hat)
+        total_bits_mv_y, _ = self.get_y_bits_probs(mv_y_for_bit, mv_scales_hat)
+        total_bits_z, _ = self.get_z_bits_probs(z_for_bit, self.bit_estimator_z)
+        total_bits_mv_z, _ = self.get_z_bits_probs(mv_z_for_bit, self.bit_estimator_z_mv)
+
+        
+        im_shape = input_frame.size()
+        pixel_num = im_shape[0] * im_shape[2] * im_shape[3]
+        bpp_y = total_bits_y / pixel_num
+        bpp_z = total_bits_z / pixel_num
+        bpp_mv_y = total_bits_mv_y / pixel_num
+        bpp_mv_z = total_bits_mv_z / pixel_num
+
+        bpp = bpp_y + bpp_z + bpp_mv_y + bpp_mv_z
+
+        return {
+            "bpp_mv_y": bpp_mv_y,
+            "bpp_mv_z": bpp_mv_z,
+            "bpp_y": bpp_y,
+            "bpp_z": bpp_z,
+            "bpp": bpp,
+
+            "recon_image": recon_image,
+            "feature": feature,
+            "warpped_image": warp_frame
+        }

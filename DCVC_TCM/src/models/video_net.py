@@ -3,6 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.autograd import Function
 
+import numpy as np
 
 backward_grid = [{} for _ in range(9)]    # 0~7 for GPU, -1 for CPU
 
@@ -199,3 +200,26 @@ class ME_Spynet(nn.Module):
                                                    flow_up], 1))
 
         return flow
+    
+    def _load_Spynet(self, model_dir):
+        for i, layer in enumerate(self.moduleBasic):
+            layer_name = f"modelL{i + 1}"
+
+            layer.conv1.weight.data, layer.conv1.bias.data = load_weight_form_np(model_dir, layer_name + '_F-1')
+            layer.conv2.weight.data, layer.conv2.bias.data = load_weight_form_np(model_dir, layer_name + '_F-2')
+            layer.conv3.weight.data, layer.conv3.bias.data = load_weight_form_np(model_dir, layer_name + '_F-3')
+            layer.conv4.weight.data, layer.conv4.bias.data = load_weight_form_np(model_dir, layer_name + '_F-4')
+            layer.conv5.weight.data, layer.conv5.bias.data = load_weight_form_np(model_dir, layer_name + '_F-5')
+        
+
+def load_weight_form_np(me_model_dir, layername):
+    index = layername.find('modelL')
+    if index == -1:
+        print('load models error!!')
+    else:
+        name = layername[index:index + 11]
+        modelweight = me_model_dir + name + '-weight.npy'
+        modelbias = me_model_dir + name + '-bias.npy'
+        weightnp = np.load(modelweight)
+        biasnp = np.load(modelbias)
+        return torch.from_numpy(weightnp), torch.from_numpy(biasnp)
