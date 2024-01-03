@@ -1,6 +1,4 @@
 import sys
-from typing import Any
-from lightning.pytorch.utilities.types import STEP_OUTPUT, OptimizerLRScheduler
 sys.path.append("../../")
 
 import json, os, math
@@ -147,28 +145,54 @@ class DCVC_TCM_Lit(L.LightningModule):
 
     def configure_optimizers(self):
         opt = optim.AdamW(self.parameters(), lr = self.base_lr)
+
+        if self.multi_frame_training:
+            milestones = [5, 15]
+        
+        else:
+            milestones = [self.stage_milestones[-1] + 5, self.stage_milestones[-1] + 10]
+
+
         scheduler = optim.lr_scheduler.MultiStepLR(
             optimizer = opt,
-            milestones = [self.stage_milestones[-1] + 10, self.stage_milestones[-1] + 20]
+            milestones = milestones,
+            gamma = 0.1
         )
 
         return [opt], [scheduler]
 
-
+    def on_train_start(self) -> None:
+        lr_scheduler = self.lr_schedulers()
+        for _ in range(10):
+            lr_scheduler.step()
+        
+        print("Hack lr", self.optimizers().optimizer.state_dict()['param_groups'][0]['lr'])
+            
+    
     def on_train_epoch_end(self):
         lr_scheduler = self.lr_schedulers()
         lr_scheduler.step()
 
 
     def on_train_epoch_start(self):
-        self._training_stage()
+        if self.multi_frame_training:
+            self._train_all()
+            self.stage = 3
+
+        else:
+            self._training_stage()
 
         # save last epcoh
         if self.current_epoch in self.stage_milestones:
-            self._save_model(name = f"model_milestone_st{self.stage}_ep{self.current_epoch - 1}.pth")
+            self._save_model(
+                name = f"model_milestone_stage{self.stage}_epoch{self.current_epoch - 1}.pth"
+            )
 
         if self.stage == 3:
-            self._save_model(name = f"model_epoch{self.current_epoch - 1}_step{self.global_step}", folder = "log/model_ckpt")
+            self._save_model(
+                name = f"model_epoch{self.current_epoch - 1}_step{self.global_step}.pth", 
+                folder = "log/model_ckpt"
+            )
 
 
     def _training_stage(self):
@@ -249,7 +273,7 @@ if __name__ == "__main__":
         config = json.load(f)
 
     model_module = DCVC_TCM_Lit(config)
-    # model_module = DCVCLit.load_from_checkpoint("lightning_logs/version_8/checkpoints/epoch=76-step=1243781.ckpt", cfg = config)
+    # model_module = DCVC_TCM_Lit.load_from_checkpoint("lightning_logs/version_2/checkpoints/epoch=51-step=839956.ckpt", cfg = config)
 
     if config["training"]["multi_frame_training"]:
         frame_num = 4
@@ -267,18 +291,19 @@ if __name__ == "__main__":
         frame_num = frame_num, interval = interval, rnd_frame_group = True
     )
     train_dataloader = DataLoader(
-        train_dataset, batch_size = batch_size, shuffle = True, num_workers = 4, persistent_workers=True, pin_memory = True
+        train_dataset, batch_size = batch_size, shuffle = True, 
+        num_workers = 4, persistent_workers=True, pin_memory = True
     )
 
 
     trainer = L.Trainer(
         max_epochs = 1000,
-        # fast_dev_run = True
+        # fast_dev_run = True,
     )
 
     trainer.fit(
         model = model_module,
         train_dataloaders = train_dataloader,
-        ckpt_path = "lightning_logs/version_0/checkpoints/epoch=4-step=80765.ckpt"
+        ckpt_path = "lightning_logs/version_4/checkpoints/epoch=4-step=161530.ckpt"
     )
     
