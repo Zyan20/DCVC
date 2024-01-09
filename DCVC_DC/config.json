@@ -1,0 +1,26 @@
+{
+    "training":{
+        "stage_milestones": [
+            10, 25, 40
+        ],
+
+        "train_lambda": 1024,
+        "q_index": 2,
+
+        "batch_size": 8,
+
+        "base_lr": 1e-4,
+        "aux_lr": 1e-3,
+
+        "multi_frame_training": false,
+
+        "flow_pretrain_dir": "../../PyTorchVideoCompression/mDVC/data/flow_pretrain_np/"
+    },
+
+    "datasets":{
+        "viemo90k":{
+            "root": "D:/vimeo_septuplet/",
+            "split_file": "sep_trainlist.txt"
+        }
+    }
+}

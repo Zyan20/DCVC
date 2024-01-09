@@ -30,7 +30,10 @@ class CompressionModel(nn.Module):
         self.masks = {}
 
     def quant(self, x):
-        return torch.round(x)
+        if self.training:
+            return x + torch.nn.init.uniform_(torch.zeros_like(x), -0.5, 0.5)
+        else:
+            return torch.round(x)
 
     def get_curr_q(self, q_scale, q_basic, q_index=None):
         q_scale = q_scale[q_index]
