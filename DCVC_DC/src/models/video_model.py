@@ -643,7 +643,7 @@ class DMC(CompressionModel):
 
         mv_hat, mv_feature = self.mv_decoder(mv_y_hat, mv_y_q_dec)
 
-        context1, context2, context3, _ = self.motion_compensation(dpb, mv_hat, frame_idx)
+        context1, context2, context3, warpframe = self.motion_compensation(dpb, mv_hat, frame_idx)
 
         y = self.contextual_encoder(x, context1, context2, context3, y_q_enc)
         y_pad, slice_shape = self.pad_for_y(y)
@@ -667,17 +667,17 @@ class DMC(CompressionModel):
         bits_z = self.get_z_bits(z_for_bit, self.bit_estimator_z)
         bits_mv_z = self.get_z_bits(mv_z_for_bit, self.bit_estimator_z_mv)
 
-        bpp_y = torch.sum(bits_y, dim=(1, 2, 3)) / pixel_num
-        bpp_z = torch.sum(bits_z, dim=(1, 2, 3)) / pixel_num
-        bpp_mv_y = torch.sum(bits_mv_y, dim=(1, 2, 3)) / pixel_num
-        bpp_mv_z = torch.sum(bits_mv_z, dim=(1, 2, 3)) / pixel_num
+        bpp_y = torch.sum(bits_y) / pixel_num
+        bpp_z = torch.sum(bits_z) / pixel_num
+        bpp_mv_y = torch.sum(bits_mv_y) / pixel_num
+        bpp_mv_z = torch.sum(bits_mv_z) / pixel_num
 
         bpp = bpp_y + bpp_z + bpp_mv_y + bpp_mv_z
-        bit = torch.sum(bpp) * pixel_num
-        bit_y = torch.sum(bpp_y) * pixel_num
-        bit_z = torch.sum(bpp_z) * pixel_num
-        bit_mv_y = torch.sum(bpp_mv_y) * pixel_num
-        bit_mv_z = torch.sum(bpp_mv_z) * pixel_num
+        # bit = torch.sum(bpp) * pixel_num
+        # bit_y = torch.sum(bpp_y) * pixel_num
+        # bit_z = torch.sum(bpp_z) * pixel_num
+        # bit_mv_y = torch.sum(bpp_mv_y) * pixel_num
+        # bit_mv_z = torch.sum(bpp_mv_z) * pixel_num
 
         return {"bpp_mv_y": bpp_mv_y,
                 "bpp_mv_z": bpp_mv_z,
@@ -691,9 +691,6 @@ class DMC(CompressionModel):
                     "ref_y": y_hat,
                     "ref_mv_y": mv_y_hat,
                 },
-                "bit": bit,
-                "bit_y": bit_y,
-                "bit_z": bit_z,
-                "bit_mv_y": bit_mv_y,
-                "bit_mv_z": bit_mv_z,
+
+                "warpped_image": warpframe
                 }

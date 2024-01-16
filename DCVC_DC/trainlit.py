@@ -9,6 +9,7 @@ import torch.nn.functional as F
 from torch.utils.data import DataLoader
 import numpy as np
 import lightning as L
+from lightning.pytorch.loggers import TensorBoardLogger
 
 from src.models.video_model import DMC
 
@@ -41,6 +42,10 @@ class DCVC_DC_Lit(L.LightningModule):
             self.model.mv_decoder,
 
             # todo, q?
+            # self.model.mv_y_q_basic_enc,
+            # self.model.mv_y_q_basic_dec,
+            # self.model.mv_y_q_scale_enc,
+            # self.model.mv_y_q_scale_dec
         ]
 
         self.sum_count = 0
@@ -100,9 +105,10 @@ class DCVC_DC_Lit(L.LightningModule):
             self.sum_out["ME_MSE"]   += out["ME_MSE"]
             self.sum_out["ME_PSNR"]  += out["ME_PSNR"]
 
-
         # average loss
         loss = loss / (T - 1)
+        self.sum_out["loss"]     += loss.item()
+
 
         opt = self.optimizers()
         opt.zero_grad()
@@ -117,7 +123,6 @@ class DCVC_DC_Lit(L.LightningModule):
 
             self.sum_out["stage"] = float(self.stage)
             self.sum_out["lr"]    = self.optimizers().optimizer.state_dict()['param_groups'][0]['lr']
-            self.sum_out["loss"]  = loss.item()
 
             self.log_dict(self.sum_out)
 
@@ -129,7 +134,7 @@ class DCVC_DC_Lit(L.LightningModule):
 
     def _get_loss(self, input, output, frame_lambda, frame_idx):
         dist_me = F.mse_loss(input, output["warpped_image"])
-        dist_recon = F.mse_loss(input, output["recon_image"])
+        dist_recon = F.mse_loss(input, output["dpb"]["ref_frame"])
 
         output["MSE"] = dist_recon.item()
         output["PSNR"] = mse2psnr(output["MSE"])
@@ -160,10 +165,10 @@ class DCVC_DC_Lit(L.LightningModule):
         opt = optim.AdamW(self.parameters(), lr = self.base_lr)
 
         if self.multi_frame_training:
-            milestones = [5, 15]
+            milestones = [8, 15]
         
         else:
-            milestones = [self.stage_milestones[-1] + 5, self.stage_milestones[-1] + 10]
+            milestones = [self.stage_milestones[-1] + 8, self.stage_milestones[-1] + 15]
 
 
         scheduler = optim.lr_scheduler.MultiStepLR(
@@ -175,9 +180,9 @@ class DCVC_DC_Lit(L.LightningModule):
         return [opt], [scheduler]
 
     def on_train_start(self) -> None:
-        lr_scheduler = self.lr_schedulers()
-        for _ in range(10):
-            lr_scheduler.step()
+        # lr_scheduler = self.lr_schedulers()
+        # for _ in range(10):
+        #     lr_scheduler.step()
         
         print("Hack lr", self.optimizers().optimizer.state_dict()['param_groups'][0]['lr'])
             
@@ -197,13 +202,15 @@ class DCVC_DC_Lit(L.LightningModule):
 
         # save last epcoh
         if self.current_epoch in self.stage_milestones:
+            name = "dcvc_dc_multi" if self.multi_frame_training else "dcvc_dc"
             self._save_model(
-                name = f"model_milestone_stage{self.stage}_epoch{self.current_epoch - 1}.pth"
+                name = f"{name}_milestone_stage{self.stage}_epoch{self.current_epoch - 1}.pth",
+                folder = "log/model_ckpt"
             )
 
         if self.stage == 3:
             self._save_model(
-                name = f"model_epoch{self.current_epoch - 1}_step{self.global_step}.pth", 
+                name = f"{name}_epoch{self.current_epoch - 1}_step{self.global_step}.pth", 
                 folder = "log/model_ckpt"
             )
 
@@ -310,11 +317,12 @@ if __name__ == "__main__":
     with open("config.json") as f:
         config = json.load(f)
 
+    
     model_module = DCVC_DC_Lit(config)
     # model_module = DCVC_TCM_Lit.load_from_checkpoint("lightning_logs/version_2/checkpoints/epoch=51-step=839956.ckpt", cfg = config)
 
     if config["training"]["multi_frame_training"]:
-        frame_num = 4
+        frame_num = 5
         interval = 1
         batch_size = config["training"]["batch_size"] // 2
     
@@ -325,23 +333,33 @@ if __name__ == "__main__":
 
 
     train_dataset = Vimeo90K(
-        root = "D:/vimeo_septuplet/", split_file="sep_trainlist.txt",
+        root = config["datasets"]["viemo90k"]["root"], 
+        split_file= config["datasets"]["viemo90k"]["split_file"],
         frame_num = frame_num, interval = interval, rnd_frame_group = True
     )
     train_dataloader = DataLoader(
         train_dataset, batch_size = batch_size, shuffle = True, 
-        num_workers = 4, persistent_workers=True, pin_memory = True
+        num_workers = 8, persistent_workers=True, pin_memory = True
     )
 
-
+    logger = TensorBoardLogger(save_dir = "log", name = config["name"])
     trainer = L.Trainer(
-        max_epochs = 1000,
+        max_epochs = 60,
         # fast_dev_run = True,
+        logger = logger,
+        strategy = "ddp_find_unused_parameters_true"
     )
 
-    trainer.fit(
-        model = model_module,
-        train_dataloaders = train_dataloader,
-        ckpt_path = "lightning_logs/version_4/checkpoints/epoch=4-step=161530.ckpt"
-    )
+
+    if config["training"]["resume"]:
+        trainer.fit(
+            model = model_module,
+            train_dataloaders = train_dataloader,
+            ckpt_path = config["training"]["ckpt"]
+        )
     
+    else:
+        trainer.fit(
+            model = model_module,
+            train_dataloaders = train_dataloader,
+        )
