@@ -80,6 +80,7 @@ class DCVC_DC_Lit(L.LightningModule):
         }
 
         for i in range(1, T):
+            # start from 1
             input_frame = batch[:, i,...].to(self.device)
             out = self.model(
                 input_frame, dpb, 
@@ -147,11 +148,11 @@ class DCVC_DC_Lit(L.LightningModule):
             rate = output["bpp_mv_y"] + output["bpp_mv_z"]
         
         elif self.stage == 1:
-            dist = dist_recon * self.weights[frame_idx]
+            dist = dist_recon
             rate = 0
 
         elif self.stage == 2:
-            dist = dist_recon * self.weights[frame_idx]
+            dist = dist_recon
             rate = output["bpp_y"] + output["bpp_z"]
 
         else:
@@ -165,10 +166,10 @@ class DCVC_DC_Lit(L.LightningModule):
         opt = optim.AdamW(self.parameters(), lr = self.base_lr)
 
         if self.multi_frame_training:
-            milestones = [8, 15]
+            milestones = [5, 10]
         
         else:
-            milestones = [self.stage_milestones[-1] + 8, self.stage_milestones[-1] + 15]
+            milestones = [self.stage_milestones[-1] + 5, self.stage_milestones[-1] + 15]
 
 
         scheduler = optim.lr_scheduler.MultiStepLR(
@@ -185,7 +186,7 @@ class DCVC_DC_Lit(L.LightningModule):
         #     lr_scheduler.step()
         
         print("Hack lr", self.optimizers().optimizer.state_dict()['param_groups'][0]['lr'])
-            
+
     
     def on_train_epoch_end(self):
         lr_scheduler = self.lr_schedulers()
@@ -201,8 +202,8 @@ class DCVC_DC_Lit(L.LightningModule):
             self._training_stage()
 
         # save last epcoh
+        name = "dcvc_dc_multi" if self.multi_frame_training else "dcvc_dc"
         if self.current_epoch in self.stage_milestones:
-            name = "dcvc_dc_multi" if self.multi_frame_training else "dcvc_dc"
             self._save_model(
                 name = f"{name}_milestone_stage{self.stage}_epoch{self.current_epoch - 1}.pth",
                 folder = "log/model_ckpt"
@@ -316,10 +317,9 @@ if __name__ == "__main__":
 
     with open("config.json") as f:
         config = json.load(f)
-
     
-    model_module = DCVC_DC_Lit(config)
-    # model_module = DCVC_TCM_Lit.load_from_checkpoint("lightning_logs/version_2/checkpoints/epoch=51-step=839956.ckpt", cfg = config)
+    # model_module = DCVC_DC_Lit(config)
+    model_module = DCVC_DC_Lit.load_from_checkpoint("log/DCVC-DC/version_0/checkpoints/epoch=46-step=702659.ckpt", cfg = config)
 
     if config["training"]["multi_frame_training"]:
         frame_num = 5
@@ -347,7 +347,7 @@ if __name__ == "__main__":
         max_epochs = 60,
         # fast_dev_run = True,
         logger = logger,
-        strategy = "ddp_find_unused_parameters_true"
+        # strategy = "ddp_find_unused_parameters_true"
     )
 
 
