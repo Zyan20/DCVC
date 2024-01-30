@@ -21,7 +21,11 @@ class CompressionModel(nn.Module):
         self.mse = nn.MSELoss(reduction='none')
 
     def quant(self, x):
-        return torch.round(x)
+        if self.training:
+            return x + torch.nn.init.uniform_(torch.zeros_like(x), -0.5, 0.5)
+        
+        else:
+            return torch.round(x)
 
     @staticmethod
     def get_curr_q(q_scale, q_basic):

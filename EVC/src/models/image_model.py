@@ -66,8 +66,11 @@ class EVC(CompressionModel):
     def compute_loss(self, x, x_hat, bits_y, bits_z):
         B, _, H, W = x.size()
         pixel_num = H * W
-        bpp_y = torch.sum(bits_y, dim=(1, 2, 3)) / pixel_num
-        bpp_z = torch.sum(bits_z, dim=(1, 2, 3)) / pixel_num
+        # bpp_y = torch.sum(bits_y, dim=(1, 2, 3)) / pixel_num
+        # bpp_z = torch.sum(bits_z, dim=(1, 2, 3)) / pixel_num
+
+        bpp_y = torch.sum(bits_y) / pixel_num
+        bpp_z = torch.sum(bits_z) / pixel_num
 
         bits = torch.sum(bpp_y + bpp_z) * pixel_num
         bpp = bpp_y + bpp_z
