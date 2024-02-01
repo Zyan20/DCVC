@@ -1,0 +1,33 @@
+name: EVC_main
+version: 0.1
+
+training:
+  train_lambda: 380
+  q_index: 2
+
+
+  base_lr: 0.0002
+
+  batch_size: 4
+
+  flow_pretrain_dir: C:/Home/Project/VideoCompression/data/flow_pretrain_np/
+
+
+  multi_frame_training: False
+
+  # for single frame training
+  stage_milestones: [10, 25, 40, 55]
+  lr_milestones: [65, 70, 75, 80]
+  lr_gamma: 0.5
+
+
+  resume: false
+  ckpt: ""
+
+
+datasets:
+  vimeo90k:
+    root: D:/vimeo_septuplet
+    split_file: sep_trainlist.txt
+
+

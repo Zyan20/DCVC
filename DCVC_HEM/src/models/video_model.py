@@ -453,12 +453,12 @@ class DMC(CompressionModel):
         feature, recon_image = self.recon_generation_net(recon_image_feature, context1)
 
         B, _, H, W = x.size()
-        pixel_num = H * W
-        mse = self.mse(x, recon_image)
-        ssim = self.ssim(x, recon_image)
-        me_mse = self.mse(x, warp_frame)
-        mse = torch.sum(mse, dim=(1, 2, 3)) / pixel_num
-        me_mse = torch.sum(me_mse, dim=(1, 2, 3)) / pixel_num
+        pixel_num = H * W * B
+        # mse = self.mse(x, recon_image)
+        # ssim = self.ssim(x, recon_image)
+        # me_mse = self.mse(x, warp_frame)
+        # mse = torch.sum(mse, dim=(1, 2, 3)) / pixel_num
+        # me_mse = torch.sum(me_mse, dim=(1, 2, 3)) / pixel_num
 
         if self.training:
             y_for_bit = self.add_noise(y_res)
@@ -470,42 +470,51 @@ class DMC(CompressionModel):
             mv_y_for_bit = mv_y_q
             z_for_bit = z_hat
             mv_z_for_bit = mv_z_hat
+            
         bits_y = self.get_y_laplace_bits(y_for_bit, scales_hat)
         bits_mv_y = self.get_y_laplace_bits(mv_y_for_bit, mv_scales_hat)
         bits_z = self.get_z_bits(z_for_bit, self.bit_estimator_z)
         bits_mv_z = self.get_z_bits(mv_z_for_bit, self.bit_estimator_z_mv)
 
-        bpp_y = torch.sum(bits_y, dim=(1, 2, 3)) / pixel_num
-        bpp_z = torch.sum(bits_z, dim=(1, 2, 3)) / pixel_num
-        bpp_mv_y = torch.sum(bits_mv_y, dim=(1, 2, 3)) / pixel_num
-        bpp_mv_z = torch.sum(bits_mv_z, dim=(1, 2, 3)) / pixel_num
+        # bpp_y = torch.sum(bits_y, dim=(1, 2, 3)) / pixel_num
+        # bpp_z = torch.sum(bits_z, dim=(1, 2, 3)) / pixel_num
+        # bpp_mv_y = torch.sum(bits_mv_y, dim=(1, 2, 3)) / pixel_num
+        # bpp_mv_z = torch.sum(bits_mv_z, dim=(1, 2, 3)) / pixel_num
+        bpp_y = torch.sum(bits_y) / pixel_num
+        bpp_z = torch.sum(bits_z) / pixel_num
+        bpp_mv_y = torch.sum(bits_mv_y) / pixel_num
+        bpp_mv_z = torch.sum(bits_mv_z) / pixel_num
 
         bpp = bpp_y + bpp_z + bpp_mv_y + bpp_mv_z
-        bit = torch.sum(bpp) * pixel_num
-        bit_y = torch.sum(bpp_y) * pixel_num
-        bit_z = torch.sum(bpp_z) * pixel_num
-        bit_mv_y = torch.sum(bpp_mv_y) * pixel_num
-        bit_mv_z = torch.sum(bpp_mv_z) * pixel_num
+
+
+        # bit = torch.sum(bpp) * pixel_num
+        # bit_y = torch.sum(bpp_y) * pixel_num
+        # bit_z = torch.sum(bpp_z) * pixel_num
+        # bit_mv_y = torch.sum(bpp_mv_y) * pixel_num
+        # bit_mv_z = torch.sum(bpp_mv_z) * pixel_num
 
         return {"bpp_mv_y": bpp_mv_y,
                 "bpp_mv_z": bpp_mv_z,
                 "bpp_y": bpp_y,
                 "bpp_z": bpp_z,
                 "bpp": bpp,
-                "me_mse": me_mse,
-                "mse": mse,
-                "ssim": ssim,
+                # "me_mse": me_mse,
+                # "mse": mse,
+                # "ssim": ssim,
                 "dpb": {
                     "ref_frame": recon_image,
                     "ref_feature": feature,
                     "ref_y": y_hat,
                     "ref_mv_y": mv_y_hat,
                 },
-                "bit": bit,
-                "bit_y": bit_y,
-                "bit_z": bit_z,
-                "bit_mv_y": bit_mv_y,
-                "bit_mv_z": bit_mv_z,
+
+                "warpped_image": warp_frame
+                # "bit": bit,
+                # "bit_y": bit_y,
+                # "bit_z": bit_z,
+                # "bit_mv_y": bit_mv_y,
+                # "bit_mv_z": bit_mv_z,
                 }
 
     def forward(self, x, dpb, mv_y_q_scale=None, y_q_scale=None):
