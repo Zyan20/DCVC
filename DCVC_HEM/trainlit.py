@@ -1,4 +1,6 @@
 import sys
+from typing import Any
+from lightning.pytorch.utilities.types import STEP_OUTPUT
 sys.path.append("../../")
 
 import yaml, os, math
@@ -104,6 +106,7 @@ class DCVC_DC_Lit(L.LightningModule):
 
         # average loss
         loss = loss / (T - 1)
+
         self.sum_out["loss"]     += loss.item()
 
 
@@ -127,6 +130,64 @@ class DCVC_DC_Lit(L.LightningModule):
                 self.sum_out[key] = 0
 
             self.sum_count = 0
+
+
+    def validation_step(self, batch, idx):
+        B, T, C, H, W = batch.shape
+
+        loss = 0
+        bpp = 0
+        psnr = 0
+        me_psnr = 0
+        mv_bpp = 0
+
+        ref_frame = batch[:, 0, ...].to(self.device)
+
+        dpb = {
+            "ref_frame": ref_frame,
+            "ref_feature": None,
+            "ref_mv_feature": None,
+            "ref_y": None,
+            "ref_mv_y": None,
+        }
+
+        for i in range(1, T):
+            # start from 1
+            input_frame = batch[:, i,...].to(self.device)
+            out = self.model(
+                input_frame, 
+                dpb, 
+                self.model.mv_y_q_scale[self.q_index],
+                self.model.y_q_scale[self.q_index]
+            )
+
+            dpb = out["dpb"]
+
+            loss += self._get_loss(input_frame, out, self.train_lambda)
+
+            bpp  += out["bpp"]
+            psnr += out["PSNR"]
+
+            me_psnr += out["ME_PSNR"]
+            mv_bpp  += out["bpp_mv_y"] + out["bpp_mv_z"]
+
+
+        loss = loss / (T - 1)
+        bpp = bpp / (T - 1)
+        psnr = psnr / (T - 1)
+        me_psnr = me_psnr / (T - 1)
+        mv_bpp = mv_bpp / (T - 1)
+
+        self.log_dict({
+            "val_ME_PSNR": me_psnr,
+            "val_MV_BPP": mv_bpp,
+
+            "val_BPP": bpp,
+            "val_PSNR": psnr,
+
+            "val_loss": loss,
+
+        }, on_epoch = True)
 
 
     def _get_loss(self, input, output, frame_lambda):
@@ -163,11 +224,10 @@ class DCVC_DC_Lit(L.LightningModule):
         opt = optim.AdamW(self.parameters(), lr = self.base_lr)
 
         if self.multi_frame_training:
-            milestones = self.lr_milestones
+            milestones = self.lr_milestones_multi
         
         else:
-            final = self.stage_milestones[-1]
-            milestones = [final + 5, final + 8, final + 10, final + 12]
+            milestones = self.lr_milestones
 
 
         scheduler = optim.lr_scheduler.MultiStepLR(
@@ -203,17 +263,17 @@ class DCVC_DC_Lit(L.LightningModule):
             self._training_stage()
 
         # save last epcoh
-        name = "dcvc_dc_multi" if self.multi_frame_training else "dcvc_dc"
+        name = "multi" if self.multi_frame_training else "single"
         if self.current_epoch in self.stage_milestones:
             self._save_model(
                 name = f"{name}_milestone_stage{self.stage}_epoch{self.current_epoch - 1}.pth",
-                folder = "lightning_logs/model_ckpt"
+                folder = "log/model_ckpt"
             )
 
         if self.stage == 3:
             self._save_model(
-                name = f"{name}_epoch{self.current_epoch - 1}_step{self.global_step}.pth", 
-                folder = "lightning_logs/model_ckpt"
+                name = f"{name}_ep{self.current_epoch - 1}_st{self.global_step}.pth", 
+                folder = "log/model_ckpt"
             )
 
 
@@ -247,10 +307,12 @@ class DCVC_DC_Lit(L.LightningModule):
         self.train_lambda = self.cfg["training"]["train_lambda"]
         self.multi_frame_training = self.cfg["training"]["multi_frame_training"]
         
+        self.lr_milestones_multi = self.cfg["training"]["lr_milestones_multi"]
         self.lr_milestones = self.cfg["training"]["lr_milestones"]
         self.lr_gamma = self.cfg["training"]["lr_gamma"]
 
         self.q_index = self.cfg["training"]["q_index"]
+
 
 
     def _freeze_mv(self):
@@ -280,6 +342,9 @@ class DCVC_DC_Lit(L.LightningModule):
             nn.init.constant_(m.bias, 0)
 
     def _save_model(self, folder = "log/model_ckpt", name = None):
+        if not os.path.exists(folder):
+            os.makedirs(folder)
+            
         if name == None:
             name = "model_ep{}_st{}.pth".format(self.current_epoch, self.global_step)
 

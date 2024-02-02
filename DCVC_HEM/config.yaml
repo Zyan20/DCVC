@@ -1,4 +1,4 @@
-name: EVC_main
+name: HEM_main_380
 version: 0.1
 
 training:
@@ -16,9 +16,11 @@ training:
   multi_frame_training: False
 
   # for single frame training
-  stage_milestones: [10, 25, 40, 55]
-  lr_milestones: [65, 70, 75, 80]
+  stage_milestones: [10, 25, 40]
+  lr_milestones: [50, 55, 60, 65]
   lr_gamma: 0.5
+
+  lr_milestones_multi: [2, 4, 6, 8]
 
 
   resume: false
@@ -29,5 +31,7 @@ datasets:
   vimeo90k:
     root: D:/vimeo_septuplet
     split_file: sep_trainlist.txt
+
+    split_file_test: sep_testlist.txt
 
 
