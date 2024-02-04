@@ -16,11 +16,11 @@ training:
   multi_frame_training: False
 
   # for single frame training
-  stage_milestones: [10, 25, 40]
-  lr_milestones: [50, 55, 60, 65]
+  stage_milestones: [10, 20, 30]
+  lr_milestones: [35, 40, 45, 50]
   lr_gamma: 0.5
 
-  lr_milestones_multi: [2, 4, 6, 8]
+  lr_milestones_multi: [1, 3, 5, 7]
 
 
   resume: false

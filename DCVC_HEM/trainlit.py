@@ -1,9 +1,6 @@
-import sys
-from typing import Any
-from lightning.pytorch.utilities.types import STEP_OUTPUT
-sys.path.append("../../")
-
-import yaml, os, math
+import sys, yaml, os, math
+# sys.path.append("../../")
+# os.environ['CUDA_VISIBLE_DEVICES'] = "2,3"
 
 import torch
 from torch import nn, optim
@@ -19,7 +16,6 @@ from util.dataset.Vimeo90K import Vimeo90K
 
 
 class DCVC_DC_Lit(L.LightningModule):
-    weights = (0.5, 1.2, 0.5, 0.9)
     def __init__(self, cfg):
         super().__init__()
         self.automatic_optimization = False
@@ -42,8 +38,18 @@ class DCVC_DC_Lit(L.LightningModule):
 
             self.model.mv_hyper_prior_decoder,
             self.model.mv_decoder,
-
         ]
+
+        self.param_q: list[nn.Module] = [
+            self.model.y_q_basic,
+            self.model.y_q_scale
+        ]
+
+        self.param_mv_q: list[nn.Module] = [
+            self.model.mv_y_q_basic,
+            self.model.mv_y_q_scale
+        ]
+
 
         self.sum_count = 0
         self.sum_out = {
@@ -108,7 +114,6 @@ class DCVC_DC_Lit(L.LightningModule):
         loss = loss / (T - 1)
 
         self.sum_out["loss"]     += loss.item()
-
 
         opt = self.optimizers()
         opt.zero_grad()
@@ -240,7 +245,7 @@ class DCVC_DC_Lit(L.LightningModule):
 
     def on_train_start(self) -> None:
         # lr_scheduler = self.lr_schedulers()
-        # for _ in range(10):
+        # for _ in range(8):
         #     lr_scheduler.step()
         
         print("Hack lr", self.optimizers().optimizer.state_dict()['param_groups'][0]['lr'])
@@ -250,8 +255,8 @@ class DCVC_DC_Lit(L.LightningModule):
         lr_scheduler = self.lr_schedulers()
         lr_scheduler.step()
 
-        print("mv_y_q_scale: ", self.model.mv_y_q_scale.reshape(4).cpu().numpy())
-        print("y_q_scale: ", self.model.y_q_scale.reshape(4).cpu().numpy())
+        print("mv_y_q_scale: ", self.model.mv_y_q_scale.detach().cpu().reshape(4).numpy())
+        print("y_q_scale: ", self.model.y_q_scale.detach().cpu().reshape(4).numpy())
 
 
     def on_train_epoch_start(self):
@@ -276,7 +281,6 @@ class DCVC_DC_Lit(L.LightningModule):
                 folder = "log/model_ckpt"
             )
 
-
     def _training_stage(self):
         self.stage = 0
         for step in self.stage_milestones:
@@ -292,13 +296,15 @@ class DCVC_DC_Lit(L.LightningModule):
             self._train_all()
             self._freeze_mv()
 
+            for p in self.param_q:
+                p.requires_grad = False
+
         elif self.stage == 2:
             self._train_all()
             self._freeze_mv()
 
         elif self.stage == 3:
             self._train_all()
-
 
     def _parse_cfg(self):
         self.stage_milestones = self.cfg["training"]["stage_milestones"]
@@ -314,14 +320,13 @@ class DCVC_DC_Lit(L.LightningModule):
         self.q_index = self.cfg["training"]["q_index"]
 
 
-
-    def _freeze_mv(self):
-        self.model.mv_y_q_basic.requires_grad = False
-        self.model.mv_y_q_scale.requires_grad = False
-        
+    def _freeze_mv(self):      
         for m in self.mv_modules:
             for p in m.parameters():
                 p.requires_grad = False
+        
+        for p in self.param_mv_q:
+            p.requires_grad = False
 
     def _train_mv(self):
         for p in self.model.parameters():
@@ -331,10 +336,12 @@ class DCVC_DC_Lit(L.LightningModule):
             for p in m.parameters():
                 p.requires_grad = True
 
+        for p in self.param_mv_q:
+            p.requires_grad = True
+
     def _train_all(self):
         for p in self.model.parameters():
             p.requires_grad = True
-
 
     def _init_weights(self, m):
         if isinstance(m, (nn.Conv2d, nn.ConvTranspose2d)):
@@ -389,10 +396,10 @@ if __name__ == "__main__":
         print(config)
     
     model_module = DCVC_DC_Lit(config)
-    # model_module = DCVC_DC_Lit.load_from_checkpoint("log/DCVC-DC/version_0/checkpoints/epoch=46-step=702659.ckpt", cfg = config)
+    # model_module = DCVC_DC_Lit.load_from_checkpoint("log/HEM_main_380/version_2/checkpoints/epoch=99-step=403900.ckpt", cfg = config)
 
     if config["training"]["multi_frame_training"]:
-        frame_num = 5
+        frame_num = 4
         interval = 1
         batch_size = config["training"]["batch_size"] // 2
     
@@ -409,12 +416,12 @@ if __name__ == "__main__":
     )
     train_dataloader = DataLoader(
         train_dataset, batch_size = batch_size, shuffle = True, 
-        num_workers = 4, persistent_workers=True, pin_memory = True
+        num_workers = 6, persistent_workers=True, pin_memory = True
     )
 
     logger = TensorBoardLogger(save_dir = "log", name = config["name"])
     trainer = L.Trainer(
-        max_epochs = 100,
+        max_epochs = 60,
         # fast_dev_run = True,
         logger = logger,
         # strategy = "ddp_find_unused_parameters_true"
