@@ -25,8 +25,6 @@ class DCVC_DC_Lit(L.LightningModule):
         self._parse_cfg()
 
         self.model = DMC()
-        self.model.apply(self._init_weights)
-        self._load_Spynet(self.flow_pretrain_dir)
 
         self.mv_modules: list[nn.Module] = [
             self.model.optic_flow,
@@ -39,7 +37,6 @@ class DCVC_DC_Lit(L.LightningModule):
             self.model.mv_hyper_prior_decoder,
             self.model.mv_decoder,
         ]
-        
 
         self.param_q: list[nn.Module] = [
             self.model.y_q_basic,
@@ -289,17 +286,24 @@ class DCVC_DC_Lit(L.LightningModule):
                 self.stage += 1
 
         if self.stage == 0:
-            self._train_mv()
+            self._freeze_all()
+            self._set_mv_y_q_param(True)
+            self._set_y_q_param(False)
 
         elif self.stage == 1:
-            self._train_codec()
+            self._freeze_all()
+            self._set_mv_y_q_param(False)
+            self._set_y_q_param(True)
 
         elif self.stage == 2:
-            self._train_all()
-            self._freeze_mv()
+            self._freeze_all()
+            self._set_mv_y_q_param(True)
+            self._set_y_q_param(True)
 
-        elif self.stage == 3:
-            self._train_all()
+        else:
+            self._freeze_all()
+            self._set_mv_y_q_param(True)
+            self._set_y_q_param(True)
 
 
     def _parse_cfg(self):
@@ -314,6 +318,16 @@ class DCVC_DC_Lit(L.LightningModule):
         self.lr_gamma = self.cfg["training"]["lr_gamma"]
 
         self.q_index = self.cfg["training"]["q_index"]
+
+    def _freeze_all(self):
+        for p in self.model.parameters():
+            p.requires_grad = False
+
+    def _set_y_q_param(self, requires_grad):
+        self.model.y_q_scale[self.q_index].requires_grad = requires_grad
+
+    def _set_mv_y_q_param(self, requires_grad):
+        self.model.mv_y_q_scale[self.q_index].requires_grad = requires_grad
 
 
     def _freeze_mv(self):      
@@ -419,8 +433,8 @@ if __name__ == "__main__":
         config = yaml.safe_load(f)
         print(config)
     
-    # model_module = DCVC_DC_Lit(config)
-    model_module = DCVC_DC_Lit.load_from_checkpoint("log/HEM_main_1024/version_1/checkpoints/epoch=59-step=323100.ckpt", cfg = config)
+    model_module = DCVC_DC_Lit(config)
+    # model_module = DCVC_DC_Lit.load_from_checkpoint("log/HEM_main_380/version_2/checkpoints/epoch=99-step=403900.ckpt", cfg = config)
 
     if config["training"]["multi_frame_training"]:
         frame_num = 4
@@ -448,7 +462,7 @@ if __name__ == "__main__":
         max_epochs = 60,
         # fast_dev_run = True,
         logger = logger,
-        # strategy = "ddp_find_unused_parameters_true"
+        strategy = "ddp_find_unused_parameters_true"
     )
 
 
