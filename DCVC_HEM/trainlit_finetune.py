@@ -48,7 +48,6 @@ class DCVC_DC_Lit(L.LightningModule):
             self.model.mv_y_q_scale
         ]
 
-
         self.sum_count = 0
         self.sum_out = {
             "bpp_mv_y": 0,
@@ -126,6 +125,8 @@ class DCVC_DC_Lit(L.LightningModule):
 
             self.sum_out["stage"] = float(self.stage)
             self.sum_out["lr"]    = self.optimizers().optimizer.state_dict()['param_groups'][0]['lr']
+            self.sum_out[f"mv_q_scale_{self.q_index}"] = self.model.mv_y_q_scale[self.q_index].item()
+            self.sum_out[f"q_scale_{self.q_index}"] = self.model.y_q_scale[self.q_index].item()
 
             self.log_dict(self.sum_out)
 
@@ -219,8 +220,9 @@ class DCVC_DC_Lit(L.LightningModule):
             dist = dist_recon
             rate = output["bpp"]
 
-
-        return frame_lambda * dist + rate
+        loss = frame_lambda * dist + rate
+        # loss.requires_grad = True
+        return loss
 
 
     def configure_optimizers(self):
@@ -256,12 +258,7 @@ class DCVC_DC_Lit(L.LightningModule):
         self._log_q("log/q_info.txt")
 
     def on_train_epoch_start(self):
-        if self.multi_frame_training:
-            self._train_all()
-            self.stage = 3
-
-        else:
-            self._training_stage()
+        self._training_stage()
 
         # save last epcoh
         name = "multi" if self.multi_frame_training else "single"
@@ -278,57 +275,58 @@ class DCVC_DC_Lit(L.LightningModule):
             )
 
     def _training_stage(self):
-        self.stage = 0
-        for step in self.stage_milestones:
-            if self.current_epoch < step:
-                break
-            else:
-                self.stage += 1
+        # self.stage = 0
+        # for step in self.stage_milestones:
+        #     if self.current_epoch < step:
+        #         break
+        #     else:
+        #         self.stage += 1
 
-        if self.stage == 0:
-            self._freeze_all()
-            self._set_mv_y_q_param(True)
-            self._set_y_q_param(False)
+        # if self.stage == 0:
+        #     self._freeze_all()
+        #     self._set_mv_y_q_param(True)
+        #     self._set_y_q_param(False)
 
-        elif self.stage == 1:
-            self._freeze_all()
-            self._set_mv_y_q_param(False)
-            self._set_y_q_param(True)
+        # elif self.stage == 1:
+        #     self._freeze_all()
+        #     self._set_mv_y_q_param(False)
+        #     self._set_y_q_param(True)
 
-        elif self.stage == 2:
-            self._freeze_all()
-            self._set_mv_y_q_param(True)
-            self._set_y_q_param(True)
+        # elif self.stage == 2:
+        #     self._freeze_all()
+        #     self._set_mv_y_q_param(True)
+        #     self._set_y_q_param(True)
 
-        else:
-            self._freeze_all()
-            self._set_mv_y_q_param(True)
-            self._set_y_q_param(True)
+        # else:
+        #     self._freeze_all()
+        #     self._set_mv_y_q_param(True)
+        #     self._set_y_q_param(True)
 
-
-    def _parse_cfg(self):
-        self.stage_milestones = self.cfg["training"]["stage_milestones"]
-        self.base_lr = self.cfg["training"]["base_lr"]
-        self.flow_pretrain_dir = self.cfg["training"]["flow_pretrain_dir"]
-        self.train_lambda = self.cfg["training"]["train_lambda"]
-        self.multi_frame_training = self.cfg["training"]["multi_frame_training"]
-        
-        self.lr_milestones_multi = self.cfg["training"]["lr_milestones_multi"]
-        self.lr_milestones = self.cfg["training"]["lr_milestones"]
-        self.lr_gamma = self.cfg["training"]["lr_gamma"]
-
-        self.q_index = self.cfg["training"]["q_index"]
+        self.stage = 3
+        self._freeze_all()
+        self._set_mv_y_q_param(True)
+        self._set_y_q_param(True)
 
     def _freeze_all(self):
         for p in self.model.parameters():
             p.requires_grad = False
 
     def _set_y_q_param(self, requires_grad):
-        self.model.y_q_scale[self.q_index].requires_grad = requires_grad
+        self.model.y_q_scale.requires_grad = requires_grad
+        # self.model.y_q_scale.register_hook(self.lock_grad_hook)
 
     def _set_mv_y_q_param(self, requires_grad):
-        self.model.mv_y_q_scale[self.q_index].requires_grad = requires_grad
+        self.model.mv_y_q_scale.requires_grad = requires_grad
+        # self.model.mv_y_q_scale.register_hook(self.lock_grad_hook)
 
+    # def lock_grad_hook(self, grad):
+    #     # 假设只允许最后一个元素有梯度
+    #     grad_clone = grad.clone()
+    #     for i in range(grad_clone.shape[0]):
+    #         if i != self.q_index:
+    #             grad_clone[i] = 0
+
+    #     return grad_clone
 
     def _freeze_mv(self):      
         for m in self.mv_modules:
@@ -384,6 +382,20 @@ class DCVC_DC_Lit(L.LightningModule):
         )
 
 
+    def _parse_cfg(self):
+        self.stage_milestones = self.cfg["training"]["stage_milestones"]
+        self.base_lr = self.cfg["training"]["base_lr"]
+        self.flow_pretrain_dir = self.cfg["training"]["flow_pretrain_dir"]
+        self.train_lambda = self.cfg["training"]["train_lambda"]
+        self.multi_frame_training = self.cfg["training"]["multi_frame_training"]
+        
+        self.lr_milestones_multi = self.cfg["training"]["lr_milestones_multi"]
+        self.lr_milestones = self.cfg["training"]["lr_milestones"]
+        self.lr_gamma = self.cfg["training"]["lr_gamma"]
+
+        self.q_index = self.cfg["training"]["q_index"]
+
+
     def _log_q(self, file):
         info = {}
         with open(file, "a+") as f:
@@ -429,11 +441,12 @@ def mse2psnr(mse):
 if __name__ == "__main__":
     L.seed_everything(3407)
 
-    with open("config.yaml") as f:
+    with open("config_finetune.yaml") as f:
         config = yaml.safe_load(f)
         print(config)
     
     model_module = DCVC_DC_Lit(config)
+    model_module.model.load_state_dict(torch.load("log/main_1024/multi_ep14_st242295.pth", map_location="cpu"))
     # model_module = DCVC_DC_Lit.load_from_checkpoint("log/HEM_main_380/version_2/checkpoints/epoch=99-step=403900.ckpt", cfg = config)
 
     if config["training"]["multi_frame_training"]:
@@ -454,7 +467,7 @@ if __name__ == "__main__":
     )
     train_dataloader = DataLoader(
         train_dataset, batch_size = batch_size, shuffle = True, 
-        num_workers = 8, persistent_workers=True, pin_memory = True
+        num_workers = 6, persistent_workers=True
     )
 
     logger = TensorBoardLogger(save_dir = "log", name = config["name"])
@@ -462,7 +475,7 @@ if __name__ == "__main__":
         max_epochs = 60,
         # fast_dev_run = True,
         logger = logger,
-        strategy = "ddp_find_unused_parameters_true"
+        # strategy = "ddp_find_unused_parameters_true"
     )
 
 

@@ -1,0 +1,37 @@
+name: HEM_main_finetune_512
+version: 0.1
+
+training:
+  train_lambda: 512
+  q_index: 1
+
+
+  base_lr: 0.0002
+
+  batch_size: 8
+
+  flow_pretrain_dir: C:/Home/Project/VideoCompression/data/flow_pretrain_np/
+
+
+  multi_frame_training: True
+
+  # for single frame training
+  stage_milestones: [10, 20, 30]
+  lr_milestones: [35, 40, 45, 50]
+  lr_gamma: 0.5
+
+  lr_milestones_multi: [1, 3, 5, 7]
+
+
+  resume: false
+  ckpt: ""
+
+
+datasets:
+  vimeo90k:
+    root: D:/vimeo_septuplet
+    split_file: sep_trainlist.txt
+
+    split_file_test: sep_testlist.txt
+
+
