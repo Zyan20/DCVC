@@ -259,12 +259,8 @@ class DCVC_DC_Lit(L.LightningModule):
         self._log_q("log/q_info.txt")
 
     def on_train_epoch_start(self):
-        if self.multi_frame_training:
-            self._train_all()
-            self.stage = 3
+        self._training_stage()
 
-        else:
-            self._training_stage()
 
         # save last epcoh
         name = "multi" if self.multi_frame_training else "single"
@@ -281,18 +277,28 @@ class DCVC_DC_Lit(L.LightningModule):
             )
 
     def _training_stage(self):
+        # multi-frame training
+        if self.multi_frame_training:
+            self._train_all()
+            self.stage = 3
+
+            return
+        
+        # single-frame training
         self.stage = 0
         for step in self.stage_milestones:
             if self.current_epoch < step:
                 break
             else:
                 self.stage += 1
-
+        
         if self.stage == 0:
             self._train_mv()
 
         elif self.stage == 1:
-            self._train_codec()
+            self._train_all()
+            self._freeze_mv()
+            self._set_y_q_param(False)
 
         elif self.stage == 2:
             self._train_all()
@@ -321,9 +327,7 @@ class DCVC_DC_Lit(L.LightningModule):
             for p in m.parameters():
                 p.requires_grad = False
         
-        for p in self.param_mv_q:
-            p.requires_grad = False
-
+        self._set_mv_y_q_param(False)
 
     def _train_mv(self):
         for p in self.model.parameters():
@@ -333,24 +337,18 @@ class DCVC_DC_Lit(L.LightningModule):
             for p in m.parameters():
                 p.requires_grad = True
 
-        for p in self.param_mv_q:
-            p.requires_grad = True
-
-
-    def _train_codec(self):
-        for p in self.model.parameters():
-            p.requires_grad = False
-        
-        for p in self.model.contextual_encoder.parameters():
-            p.requires_grad = True
-        
-        for p in self.model.contextual_decoder.parameters():
-            p.requires_grad = True
-
+        self._set_mv_y_q_param(True)
 
     def _train_all(self):
         for p in self.model.parameters():
             p.requires_grad = True
+
+    def _set_y_q_param(self, requires_grad):
+        self.model.y_q_scale.requires_grad = requires_grad
+
+    def _set_mv_y_q_param(self, requires_grad):
+        self.model.mv_y_q_scale.requires_grad = requires_grad
+
 
     def _init_weights(self, m):
         if isinstance(m, (nn.Conv2d, nn.ConvTranspose2d)):
@@ -369,7 +367,6 @@ class DCVC_DC_Lit(L.LightningModule):
             os.path.join(folder, name)
         )
 
-
     def _log_q(self, file):
         info = {}
         with open(file, "a+") as f:
@@ -378,9 +375,6 @@ class DCVC_DC_Lit(L.LightningModule):
             info["epoch"] = self.current_epoch
 
             json.dump(info, f, indent = 2)
-
-            
-
 
     def _load_Spynet(self, model_dir):
         for i, layer in enumerate(self.model.optic_flow.moduleBasic):
@@ -420,7 +414,7 @@ if __name__ == "__main__":
         print(config)
     
     # model_module = DCVC_DC_Lit(config)
-    model_module = DCVC_DC_Lit.load_from_checkpoint("log/HEM_main_1024/version_1/checkpoints/epoch=59-step=323100.ckpt", cfg = config)
+    model_module = DCVC_DC_Lit.load_from_checkpoint("log/HEM_main_1024_v1/version_0/checkpoints/epoch=79-step=646160.ckpt", cfg = config)
 
     if config["training"]["multi_frame_training"]:
         frame_num = 4
@@ -445,7 +439,7 @@ if __name__ == "__main__":
 
     logger = TensorBoardLogger(save_dir = "log", name = config["name"])
     trainer = L.Trainer(
-        max_epochs = 60,
+        max_epochs = 80,
         # fast_dev_run = True,
         logger = logger,
         # strategy = "ddp_find_unused_parameters_true"
