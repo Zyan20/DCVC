@@ -1,7 +1,7 @@
 import sys
 sys.path.append("../../")
 
-import json, os, math
+import yaml, os, math
 
 import torch
 from torch import nn, optim
@@ -17,7 +17,9 @@ from util.dataset.Vimeo90K import Vimeo90K
 
 
 class DCVC_DC_Lit(L.LightningModule):
-    weights = (0.5, 1.2, 0.5, 0.9)
+    FRAME_WEIGHTS = (0.5, 1.2, 0.5, 0.9)
+    LAMBDA = (256, 512, 1024, 2048)
+
     def __init__(self, cfg):
         super().__init__()
         self.automatic_optimization = False
@@ -41,11 +43,14 @@ class DCVC_DC_Lit(L.LightningModule):
             self.model.mv_hyper_prior_decoder,
             self.model.mv_decoder,
 
-            # todo, q?
-            # self.model.mv_y_q_basic_enc,
-            # self.model.mv_y_q_basic_dec,
-            # self.model.mv_y_q_scale_enc,
-            # self.model.mv_y_q_scale_dec
+            self.model.mv_y_spatial_prior,
+            self.model.mv_y_spatial_prior_adaptor_1,
+            self.model.mv_y_spatial_prior_adaptor_2,
+            self.model.mv_y_spatial_prior_adaptor_3,
+
+            self.model.mv_y_prior_fusion,
+            self.model.mv_y_prior_fusion_adaptor_0,
+            self.model.mv_y_prior_fusion_adaptor_1,
         ]
 
         self.sum_count = 0
@@ -79,6 +84,15 @@ class DCVC_DC_Lit(L.LightningModule):
             "ref_mv_y": None,
         }
 
+        # randn
+        if self.stage >= 3:
+            self.q_index = np.random.randint(0, 4)
+
+        else:
+            self.q_index = 2     # 1024
+
+        # print(self.q_index)
+
         for i in range(1, T):
             # start from 1
             input_frame = batch[:, i,...].to(self.device)
@@ -90,7 +104,11 @@ class DCVC_DC_Lit(L.LightningModule):
 
             dpb = out["dpb"]
 
-            loss += self._get_loss(input_frame, out, self.train_lambda, i)
+            loss += self._get_loss(
+                input_frame, out, 
+                self.LAMBDA[self.q_index], 
+                i - 1
+            )
 
             # log
             self.sum_count += 1
@@ -116,6 +134,9 @@ class DCVC_DC_Lit(L.LightningModule):
         self.manual_backward(loss)
         self.clip_gradients(opt, gradient_clip_val=0.5, gradient_clip_algorithm="norm")
         opt.step()
+
+
+ 
         
         # log
         if self.global_step % 50 == 0:
@@ -124,6 +145,12 @@ class DCVC_DC_Lit(L.LightningModule):
 
             self.sum_out["stage"] = float(self.stage)
             self.sum_out["lr"]    = self.optimizers().optimizer.state_dict()['param_groups'][0]['lr']
+
+            for i in range(4):
+                self.sum_out[f"mv_y_q_enc_{i}"]   = self.model.mv_y_q_scale_enc[i].item()
+                self.sum_out[f"mv_y_q_dec_{i}"]   = self.model.mv_y_q_scale_dec[i].item()
+                self.sum_out[f"y_q_enc_{i}"]      = self.model.y_q_scale_enc[i].item()
+                self.sum_out[f"y_q_dec_{i}"]      = self.model.y_q_scale_dec[i].item()
 
             self.log_dict(self.sum_out)
 
@@ -156,8 +183,12 @@ class DCVC_DC_Lit(L.LightningModule):
             rate = output["bpp_y"] + output["bpp_z"]
 
         else:
-            dist = dist_recon * self.weights[frame_idx]
+            dist = dist_recon
             rate = output["bpp"]
+
+
+        if self.multi_frame_training:
+            dist *= self.FRAME_WEIGHTS[frame_idx]
 
         return frame_lambda * dist + rate
 
@@ -166,16 +197,16 @@ class DCVC_DC_Lit(L.LightningModule):
         opt = optim.AdamW(self.parameters(), lr = self.base_lr)
 
         if self.multi_frame_training:
-            milestones = [5, 10]
+            milestones = self.lr_milestones_multi
         
         else:
-            milestones = [self.stage_milestones[-1] + 5, self.stage_milestones[-1] + 15]
+            milestones = self.lr_milestones
 
 
         scheduler = optim.lr_scheduler.MultiStepLR(
             optimizer = opt,
             milestones = milestones,
-            gamma = 0.1
+            gamma = self.lr_gamma
         )
 
         return [opt], [scheduler]
@@ -194,15 +225,10 @@ class DCVC_DC_Lit(L.LightningModule):
 
 
     def on_train_epoch_start(self):
-        if self.multi_frame_training:
-            self._train_all()
-            self.stage = 3
-
-        else:
-            self._training_stage()
+        self._training_stage()
 
         # save last epcoh
-        name = "dcvc_dc_multi" if self.multi_frame_training else "dcvc_dc"
+        name = "multi" if self.multi_frame_training else "single"
         if self.current_epoch in self.stage_milestones:
             self._save_model(
                 name = f"{name}_milestone_stage{self.stage}_epoch{self.current_epoch - 1}.pth",
@@ -211,12 +237,20 @@ class DCVC_DC_Lit(L.LightningModule):
 
         if self.stage == 3:
             self._save_model(
-                name = f"{name}_epoch{self.current_epoch - 1}_step{self.global_step}.pth", 
+                name = f"{name}_ep{self.current_epoch - 1}_st{self.global_step}.pth", 
                 folder = "log/model_ckpt"
             )
 
 
     def _training_stage(self):
+        # multi-frame training
+        if self.multi_frame_training:
+            self._train_all()
+            self.stage = 3
+
+            return
+        
+        # single-frame training
         self.stage = 0
         for step in self.stage_milestones:
             if self.current_epoch < step:
@@ -227,11 +261,22 @@ class DCVC_DC_Lit(L.LightningModule):
         if self.stage == 0:
             self._train_mv()
 
+            self._set_mv_y_q_param(False)
+            self._set_y_q_param(False)
+
         elif self.stage == 1:
+            self._train_all()
             self._freeze_mv()
 
+            self._set_mv_y_q_param(False)
+            self._set_y_q_param(False)
+
         elif self.stage == 2:
+            self._train_all()
             self._freeze_mv()
+
+            self._set_mv_y_q_param(False)
+            self._set_y_q_param(False)
 
         elif self.stage == 3:
             self._train_all()
@@ -242,20 +287,37 @@ class DCVC_DC_Lit(L.LightningModule):
 
         self.stage_milestones = self.cfg["training"]["stage_milestones"]
         self.base_lr = self.cfg["training"]["base_lr"]
-        self.aux_lr = self.cfg["training"]["aux_lr"]
         self.flow_pretrain_dir = self.cfg["training"]["flow_pretrain_dir"]
-        self.train_lambda = self.cfg["training"]["train_lambda"]
+        # self.train_lambda = self.cfg["training"]["train_lambda"]
         self.multi_frame_training = self.cfg["training"]["multi_frame_training"]
+        
+        self.lr_milestones_multi = self.cfg["training"]["lr_milestones_multi"]
+        self.lr_milestones = self.cfg["training"]["lr_milestones"]
+        self.lr_gamma = self.cfg["training"]["lr_gamma"]
 
-        self.q_index = self.cfg["training"]["q_index"]
+        # self.q_index = self.cfg["training"]["q_index"]
+
+
+    def _set_mv_y_q_param(self, requires_grad):
+        self.model.mv_y_q_scale_enc.requires_grad = requires_grad
+        self.model.mv_y_q_scale_dec.requires_grad = requires_grad
+
+        self.model.mv_y_q_basic_enc.requires_grad = requires_grad
+        self.model.mv_y_q_basic_dec.requires_grad = requires_grad
+
+    def _set_y_q_param(self, requires_grad):
+        self.model.y_q_scale_enc.requires_grad = requires_grad
+        self.model.y_q_scale_dec.requires_grad = requires_grad
+
+        self.model.y_q_basic_enc.requires_grad = requires_grad
+        self.model.y_q_basic_dec.requires_grad = requires_grad
 
 
     def _freeze_mv(self):
-        self._train_all()
-
         for m in self.mv_modules:
             for p in m.parameters():
                 p.requires_grad = False
+        
 
     def _train_mv(self):
         for p in self.model.parameters():
@@ -276,6 +338,9 @@ class DCVC_DC_Lit(L.LightningModule):
             nn.init.constant_(m.bias, 0)
 
     def _save_model(self, folder = "log/model_ckpt", name = None):
+        if not os.path.exists(folder):
+            os.makedirs(folder)
+            
         if name == None:
             name = "model_ep{}_st{}.pth".format(self.current_epoch, self.global_step)
 
@@ -315,11 +380,12 @@ def mse2psnr(mse):
 if __name__ == "__main__":
     L.seed_everything(3407)
 
-    with open("config.json") as f:
-        config = json.load(f)
+    with open("config.yaml") as f:
+        config = yaml.safe_load(f)
+        print(config)
     
-    # model_module = DCVC_DC_Lit(config)
-    model_module = DCVC_DC_Lit.load_from_checkpoint("log/DCVC-DC/version_0/checkpoints/epoch=46-step=702659.ckpt", cfg = config)
+    model_module = DCVC_DC_Lit(config)
+    # model_module = DCVC_DC_Lit.load_from_checkpoint("log/DCVC-DC/version_0/checkpoints/epoch=46-step=702659.ckpt", cfg = config)
 
     if config["training"]["multi_frame_training"]:
         frame_num = 5
@@ -333,8 +399,8 @@ if __name__ == "__main__":
 
 
     train_dataset = Vimeo90K(
-        root = config["datasets"]["viemo90k"]["root"], 
-        split_file= config["datasets"]["viemo90k"]["split_file"],
+        root = config["datasets"]["vimeo90k"]["root"], 
+        split_file= config["datasets"]["vimeo90k"]["split_file"],
         frame_num = frame_num, interval = interval, rnd_frame_group = True
     )
     train_dataloader = DataLoader(
@@ -344,10 +410,10 @@ if __name__ == "__main__":
 
     logger = TensorBoardLogger(save_dir = "log", name = config["name"])
     trainer = L.Trainer(
-        max_epochs = 60,
+        max_epochs = 100,
         # fast_dev_run = True,
         logger = logger,
-        # strategy = "ddp_find_unused_parameters_true"
+        strategy = "ddp_find_unused_parameters_true"
     )
 
 
