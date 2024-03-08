@@ -11,3 +11,6 @@ build/
 *.pth
 
 lightning_logs
+output_json
+output
+log

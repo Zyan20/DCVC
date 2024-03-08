@@ -504,6 +504,8 @@ class DMC(CompressionModel):
             result = {
                 "dpb": encoded['dpb'],
                 "bit": encoded['bit'].item(),
+                "bpp": encoded['bpp'].item(),
+                
             }
             return result
 
@@ -578,4 +580,5 @@ class DMC(CompressionModel):
                     "ref_mv_y": mv_y_hat,
                 },
                 "bit": bit,
+                "bpp": torch.mean(bpp)
                 }
